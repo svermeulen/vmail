@@ -28,7 +28,7 @@ module Vmail
           @max_messages_to_scan = n || 500
         end
         opts.on("-v", "--version", "Show version") do
-          require 'vmail/version'
+          require_relative 'version'
           puts "vmail #{Vmail::VERSION}\nCopyright 2010 Daniel Choi under the MIT license"
           exit
         end
@@ -72,7 +72,7 @@ EOF
           end
 
           if @get_contacts
-            require 'vmail/contacts_extractor'
+            require_relative 'contacts_extractor'
             extractor = ContactsExtractor.new(@config['username'], @config['password'])
             File.open(DEFAULT_CONTACTS_FILENAME, 'w') do |file|
               extractor.extract(@max_messages_to_scan) do |address| 

@@ -1,19 +1,19 @@
 # encoding: UTF-8
 require 'drb'
-require 'vmail/string_ext'
+require_relative 'string_ext'
 require 'yaml'
 require 'mail'
 require 'net/imap'
 require 'time'
 require 'logger'
-require 'vmail/helpers'
-require 'vmail/address_quoter'
-require 'vmail/database'
-require 'vmail/searching'
-require 'vmail/showing_headers'
-require 'vmail/showing_message'
-require 'vmail/flagging_and_moving'
-require 'vmail/reply_templating'
+require_relative 'helpers'
+require_relative 'address_quoter'
+require_relative 'database'
+require_relative 'searching'
+require_relative 'showing_headers'
+require_relative 'showing_message'
+require_relative 'flagging_and_moving'
+require_relative 'reply_templating'
 
 module Vmail
   class ImapClient

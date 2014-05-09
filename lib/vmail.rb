@@ -1,7 +1,7 @@
-require 'vmail/version'
-require 'vmail/options'
-require 'vmail/query'
-require 'vmail/message_formatter'
+require_relative 'vmail/version'
+require_relative 'vmail/options'
+require_relative 'vmail/query'
+require_relative 'vmail/message_formatter'
 require 'versionomy'
 
 module Vmail
@@ -35,7 +35,7 @@ module Vmail
     check_html_reader
 
     working_dir = ENV['VMAIL_HOME'] || "#{ENV['HOME']}/.vmail/default"
-    `mkdir -p #{working_dir}`
+    #`mkdir -p #{working_dir}`
     puts "Changing working directory to #{working_dir}"
     Dir.chdir(working_dir)
     opts = Vmail::Options.new(ARGV)
@@ -51,7 +51,7 @@ module Vmail
 
     # inbox poller
     if config['polling'] == true
-      require 'vmail/inbox_poller'
+      require_relative 'vmail/inbox_poller'
       inbox_poller = Vmail::InboxPoller.start config
       Thread.new do
         inbox_poller.start_polling
@@ -63,7 +63,7 @@ module Vmail
     puts "Working directory: #{Dir.pwd}"
 
     # require after the working dir is set
-    require 'vmail/imap_client'
+    require_relative 'vmail/imap_client'
 
     drb_uri = begin
                 Vmail::ImapClient.daemon config

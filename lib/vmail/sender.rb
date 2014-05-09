@@ -1,5 +1,5 @@
-require 'vmail/send_options'
-require 'vmail/imap_client'
+require_relative 'send_options'
+require_relative 'imap_client'
 
 module Vmail
   module Sender

@@ -1,4 +1,4 @@
-require 'vmail/options'
+require_relative 'options'
 
 module Vmail
   class SendOptions < Vmail::Options
@@ -12,7 +12,7 @@ module Vmail
           @config_file = config_file
         end
         opts.on("-v", "--version", "Show version (identical to vmail version)") do
-          require 'vmail/version'
+          require_relative 'version'
           puts "vmail #{Vmail::VERSION}\nCopyright 2010 Daniel Choi under the MIT license"
           exit
         end
