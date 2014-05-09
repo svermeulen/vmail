@@ -18,6 +18,10 @@ let s:browser_command = $VMAIL_BROWSER
 let s:append_file = ''
 
 let s:drb_uri = $DRB_URI
+" HACK: this speeds things up considerably, appears to be a dns issue
+"let s:drb_uri = substitute($DRB_URI, '\v^.*:', 'druby://localhost:', '')
+" this speeds things up even more for some reason
+"let s:drb_uri = substitute($DRB_URI, '\v^.*:', 'druby://192.168.2.11:', '')
 
 let s:client_script = "vmail_client " . shellescape(s:drb_uri) . " "
 let s:set_window_width_command = s:client_script . "window_width= "
@@ -64,6 +68,11 @@ function! s:create_list_window()
   let s:listbufname = bufname('%')
   setlocal statusline=%!VmailStatusLine()
   call s:message_list_window_mappings()
+  call s:message_list_window_mappings_custom()
+
+  autocmd CursorMoved <buffer> :redraw
+  autocmd BufEnter,BufWinEnter <buffer> :call <SID>set_list_colors()
+
   autocmd BufNewFile,BufRead *.txt setlocal modifiable
 endfunction
 
@@ -74,11 +83,13 @@ function! s:create_message_window()
   setlocal buftype=nofile
   let s:message_window_bufnr = bufnr('%')
   call s:message_window_mappings()
+  call s:message_window_mappings_custom()
   setlocal ft=mail
   close
 endfunction
 
 function! s:system_with_error_handling(command)
+  "echom "Executing command '" . a:command . "'"
   let res = system(a:command)
   if res =~ 'VMAIL_ERROR'
     echoe "ERROR" res
@@ -122,7 +133,7 @@ function! s:show_message(stay_in_message_list)
   " critical: don't call execute 'normal \<cr>'
   " call feedkeys("<cr>")
   1delete
-  normal 1Gjk
+  normal! 1G}
   set nomodifiable
   if a:stay_in_message_list
     call s:focus_list_window()
@@ -139,9 +150,9 @@ function! s:show_next_message()
   else
     call s:focus_list_window()
   end
-  normal j
+  normal! j
   call s:show_message(1)
-  normal zz
+  normal! zz
   wincmd p
   redraw
 endfunction
@@ -154,11 +165,11 @@ function! s:show_previous_message()
   else
     call s:focus_list_window()
   end
-  normal k
+  normal! k
   if line('.') != line('$')
     call s:show_message(1)
   endif
-  normal zz
+  normal! zz
   wincmd p
   redraw
 endfunction
@@ -167,14 +178,14 @@ endfunction
 " from message list window
 function! s:show_next_message_in_list()
   if line('.') != line('$')
-    normal j
+    normal! j
     call s:show_message(1)
   endif
 endfunction
 
 function! s:show_previous_message_in_list()
   if line('.') != 1
-    normal k
+    normal! k
     call s:show_message(1)
   endif
 endfunction
@@ -189,7 +200,7 @@ function! s:show_raw()
   let res = s:system_with_error_handling(command)
   put =res
   1delete
-  normal 1G
+  normal!! 1G
   setlocal nomodifiable
 endfunction
 
@@ -221,14 +232,14 @@ function! s:focus_message_window()
   endif
 endfunction
 
-func! s:close_message_window()
+function! s:close_message_window()
   if winnr('$') > 1
     close!
   else
     call s:focus_list_window()
     wincmd p
     close!
-    normal z.
+    normal! z.
   endif
 endfunc
 
@@ -245,7 +256,7 @@ function! s:update()
     write!
     let num = len(lines)
     call cursor(num, 0)
-    normal z.
+    normal! z.
     redraw
     echom "You have " . num . " new message" . (num == 1 ? '' : 's') . "!"
   else
@@ -327,7 +338,7 @@ function! s:toggle_star() range
 endfunction
 
 " flag can be Deleted or spam
-func! s:delete_messages(flag) range
+function! s:delete_messages(flag) range
   let uid_set = s:collect_uids(a:firstline, a:lastline)
   let nummsgs = len(uid_set)
   let command = s:flag_command . shellescape(join(uid_set, ',')) . " +FLAGS " . a:flag
@@ -345,7 +356,7 @@ func! s:delete_messages(flag) range
   echo nummsgs .  " message" . (nummsgs == 1 ? '' : 's') . " marked " . a:flag
 endfunc
 
-func! s:archive_messages() range
+function! s:archive_messages() range
   let uid_set = s:collect_uids(a:firstline, a:lastline)
   let nummsgs = len(uid_set)
   let command = s:move_to_command . shellescape(join(uid_set, ',')) . ' ' . "all"
@@ -362,7 +373,7 @@ endfunc
 " --------------------------------------------------------------------------------
 
 " append text bodies of a set of messages to a file
-func! s:append_messages_to_file() range
+function! s:append_messages_to_file() range
   let uid_set = s:collect_uids(a:firstline, a:lastline)
   let nummsgs = len(uid_set)
   let append_file = input("print messages to file: ", s:append_file)
@@ -396,14 +407,14 @@ function! s:move_to_mailbox(copy) range
   resize 1
   let prompt = "select mailbox to " . (a:copy ? 'copy' : 'move') . " to: "
   call setline(1, prompt)
-  normal $
+  normal! $
   inoremap <silent> <buffer> <cr> <Esc>:call <SID>complete_move_to_mailbox()<CR>
   inoremap <silent> <buffer> <esc> <Esc>:q<cr>
   setlocal completefunc=CompleteMoveMailbox
   " c-p clears the line
   let s:firstline = a:firstline
   let s:lastline = a:lastline
-  call feedkeys("a\<c-x>\<c-u>\<c-p>", 't')
+  call feedkeys("f\<c-x>\<c-u>\<c-p>", 't')
   " save these in script scope to delete the lines when move completes
 endfunction
 
@@ -474,13 +485,15 @@ function! s:mailbox_window()
   setlocal noswapfile
   setlocal modifiable
   resize 1
+
   inoremap <silent> <buffer> <cr> <Esc>:call <SID>select_mailbox()<CR>
   inoremap <silent> <buffer> <esc> <Esc>:q<cr>
+
   setlocal completefunc=CompleteMailbox
   " c-p clears the line
   call setline(1, "select mailbox to switch to: ")
-  normal $
-  call feedkeys("a\<c-x>\<c-u>\<c-p>", 't')
+  normal! $
+  call feedkeys("f\<c-x>\<c-u>\<c-p>", 't')
 endfunction
 
 function! CompleteMailbox(findstart, base)
@@ -533,15 +546,15 @@ function! s:select_mailbox()
   let res = s:system_with_error_handling(command)
   silent 1,$delete
   silent! put! =res
-  execute "normal Gdd\<c-y>"
+  execute "normal! Gdd\<c-y>"
   setlocal nomodifiable
   write
-  normal gg
+  normal! gg
   redraw
   echom "Current mailbox: ". s:mailbox
 endfunction
 
-func! s:search_query()
+function! s:search_query()
   if !exists("s:query")
     let s:query = ""
   endif
@@ -565,10 +578,10 @@ function! s:do_search()
   let res = s:system_with_error_handling(command)
   silent! 1,$delete
   silent! put! =res
-  execute "silent normal Gdd\<c-y>"
+  execute "silent normal! Gdd\<c-y>"
   setlocal nomodifiable
   write
-  normal gg
+  normal! gg
 endfunction
 
 function! s:more_messages()
@@ -578,9 +591,9 @@ function! s:more_messages()
   setlocal modifiable
   let lines =  split(res, "\n")
   call append(line('$'), lines)
-  " execute "normal Gdd\<c-y>"
+  " execute "normal! Gdd\<c-y>"
   setlocal nomodifiable
-  normal j
+  normal! j
   redraw
   echo "Done"
 endfunction
@@ -595,7 +608,7 @@ function! s:compose_reply(all)
   endif
   call s:open_compose_window(command)
   " cursor after headers
-  normal 1G}
+  normal! 1G}
 endfunction
 
 function! s:compose_message()
@@ -603,17 +616,17 @@ function! s:compose_message()
   call s:open_compose_window(command)
   " position cursor after to:
 "  call search("^to:")
-"  normal A
+"  normal! A
 endfunction
 
 function! s:compose_forward()
   let command = s:forward_template_command
   call s:open_compose_window(command)
 "  call search("^to:")
-"  normal A
+"  normal! A
 endfunction
 
-func! s:open_compose_window(command)
+function! s:open_compose_window(command)
   redraw
   echo a:command
   let res = s:system_with_error_handling(a:command)
@@ -628,13 +641,15 @@ func! s:open_compose_window(command)
   redraw
   "call feedkeys("\<cr>")
   call s:compose_window_mappings()
+  call s:compose_window_mappings_custom()
   setlocal completefunc=CompleteContact
   setlocal ft=mail
-  normal 1G
+  normal! 1G
 endfunc
 
-func! s:turn_into_compose_window()
+function! s:turn_into_compose_window()
   call s:compose_window_mappings()
+  call s:compose_window_mappings_custom()
   setlocal completefunc=CompleteContact
 endfunc
 
@@ -664,11 +679,11 @@ function! CompleteContact(findstart, base)
   endif
 endfun
 
-func! s:close_and_focus_list_window()
+function! s:close_and_focus_list_window()
   call s:focus_list_window()
   wincmd p
   close!
-  normal z.
+  normal! z.
 endfunc
 
 
@@ -687,7 +702,7 @@ endfunction
 " --------------------------------------------------------------------------------
 
 " call from inside message window with <Leader>h
-func! s:open_html_part()
+function! s:open_html_part()
   let command = s:open_html_part_command
   " the command saves the html part to a local file
   let outfile = s:system_with_error_handling(command)
@@ -695,7 +710,7 @@ func! s:open_html_part()
   exec "!" . s:browser_command . ' ' . outfile
 endfunc
 
-func! s:save_attachments()
+function! s:save_attachments()
   if !exists("s:savedir")
     let s:savedir = getcwd() . "/attachments"
   end
@@ -705,9 +720,9 @@ func! s:save_attachments()
   echo res
 endfunc
 
-func! s:attach_file(file)
-  normal gg
-  normal }
+function! s:attach_file(file)
+  normal! gg
+  normal! }
   let attach = "attach: " . a:file
   put =attach
 endfunc
@@ -715,10 +730,10 @@ endfunc
 
 " --------------------------------------------------------------------------------
 
-func! s:toggle_maximize_window()
+function! s:toggle_maximize_window()
   if winnr('$') > 1
     only
-    " normal z.
+    " normal! z.
   elseif bufwinnr(s:listbufnr) == winnr()
     call s:show_message(1)
   else " we're in the message window
@@ -729,7 +744,7 @@ endfunc
 
 " maybe not DRY enough, but fix that later
 " also, come up with a more precise regex pattern for matching hyperlinks
-func! s:open_href(all) range
+function! s:open_href(all) range
   let pattern = 'https\?:[^ >)\]]\+'
   let n = 0
   " range version
@@ -767,7 +782,7 @@ endfunc
 
 " --------------------------------------------------------------------------------
 "  HELP
-func! s:show_help()
+function! s:show_help()
   let command = s:browser_command . ' ' . shellescape('http://danielchoi.com/software/vmail.html')
   call s:system_with_error_handling(command)
   "let helpfile = s:system_with_error_handling(s:show_help_command)
@@ -791,294 +806,374 @@ endfunc
 " --------------------------------------------------------------------------------
 " MAPPINGS
 
-func! s:message_window_mappings()
-  if !hasmapto('<Plug>VmailMessageWindow_FocusListWindow')
-    nmap <buffer> <CR> <Plug>VmailMessageWindow_FocusListWindow
-  endif
+function! s:message_window_mappings()
+  "if !hasmapto('<Plug>VmailMessageWindow_FocusListWindow')
+    "nmap <buffer> <CR> <Plug>VmailMessageWindow_FocusListWindow
+  "endif
   nnoremap <buffer> <unique> <script> <Plug>VmailMessageWindow_FocusListWindow <C-W>=:call <SID>focus_list_window()<CR>
 
-  if !hasmapto('<Plug>VmailMessageWindow_Reply')
-    nmap <buffer> <leader>r <Plug>VmailMessageWindow_Reply
-  endif
-  nnoremap <buffer> <unique> <script> <Plug>VmailMessageWindow_Reply :call <SID>compose_reply(0)<CR>
+  "if !hasmapto('<Plug>VmailMessageWindow_Reply')
+    "nmap <buffer> <leader>r <Plug>VmailMessageWindow_Reply
+  "endif
+  nnoremap <buffer> <unique> <script> <Plug>VmailMessageWindow_Reply/ :call <SID>compose_reply(0)<CR>
 
-  if !hasmapto('<Plug>VmailMessageWindow_ReplyToAll')
-    nmap <buffer> <leader>a <Plug>VmailMessageWindow_ReplyToAll
-  endif
+  "if !hasmapto('<Plug>VmailMessageWindow_ReplyToAll')
+    "nmap <buffer> <leader>a <Plug>VmailMessageWindow_ReplyToAll
+  "endif
   nnoremap <buffer> <unique> <script> <Plug>VmailMessageWindow_ReplyToAll :call <SID>compose_reply(1)<CR>
 
-  if !hasmapto('<Plug>VmailMessageWindow_ShowRaw')
-    nmap <buffer> <leader>R <Plug>VmailMessageWindow_ShowRaw
-  endif
+  "if !hasmapto('<Plug>VmailMessageWindow_ShowRaw')
+    "nmap <buffer> <leader>R <Plug>VmailMessageWindow_ShowRaw
+  "endif
   nnoremap <buffer> <unique> <script> <Plug>VmailMessageWindow_ShowRaw :call <SID>show_raw()<CR>
 
-  if !hasmapto('<Plug>VmailMessageWindow_Forward')
-    nmap <buffer> <leader>f <Plug>VmailMessageWindow_Forward
-  endif
+  "if !hasmapto('<Plug>VmailMessageWindow_Forward')
+    "nmap <buffer> <leader>f <Plug>VmailMessageWindow_Forward
+  "endif
   nnoremap <buffer> <unique> <script> <Plug>VmailMessageWindow_Forward :call <SID>compose_forward()<CR>
 
-  if !hasmapto('<Plug>VmailMessageWindow_ShowNext')
-    nmap <buffer> <C-j> <Plug>VmailMessageWindow_ShowNext
-    nmap <buffer> <leader>j <Plug>VmailMessageWindow_ShowNext
-  endif
+  "if !hasmapto('<Plug>VmailMessageWindow_ShowNext')
+    "nmap <buffer> <C-j> <Plug>VmailMessageWindow_ShowNext
+    "nmap <buffer> <leader>j <Plug>VmailMessageWindow_ShowNext
+  "endif
   nnoremap <buffer> <unique> <script> <Plug>VmailMessageWindow_ShowNext :call <SID>show_next_message()<CR>
 
-  if !hasmapto('<Plug>VmailMessageWindow_ShowPrev')
-    nmap <buffer> <C-k> <Plug>VmailMessageWindow_ShowPrev
-    nmap <buffer> <leader>k <Plug>VmailMessageWindow_ShowPrev
-  endif
+  "if !hasmapto('<Plug>VmailMessageWindow_ShowPrev')
+    "nmap <buffer> <C-k> <Plug>VmailMessageWindow_ShowPrev
+    "nmap <buffer> <leader>k <Plug>VmailMessageWindow_ShowPrev
+  "endif
   nnoremap <buffer> <unique> <script> <Plug>VmailMessageWindow_ShowPrev :call <SID>show_previous_message()<CR>
 
-  if !hasmapto('<Plug>VmailMessageWindow_ComposeMessage')
-    nmap <buffer> <leader>c <Plug>VmailMessageWindow_ComposeMessage
-  endif
+  "if !hasmapto('<Plug>VmailMessageWindow_ComposeMessage')
+    "nmap <buffer> <leader>c <Plug>VmailMessageWindow_ComposeMessage
+  "endif
   nnoremap <buffer> <unique> <script> <Plug>VmailMessageWindow_ComposeMessage :call <SID>compose_message()<CR>
 
-  if !hasmapto('<Plug>VmailMessageWindow_OpenHTML')
-    nmap <buffer> <leader>h <Plug>VmailMessageWindow_OpenHTML
-  endif
+  "if !hasmapto('<Plug>VmailMessageWindow_OpenHTML')
+    "nmap <buffer> <leader>h <Plug>VmailMessageWindow_OpenHTML
+  "endif
   nnoremap <buffer> <unique> <script> <Plug>VmailMessageWindow_OpenHTML :call <SID>open_html_part()<CR>
 
-  if !hasmapto('<Plug>VmailMessageWindow_CloseWindow')
-    nmap <buffer> <leader>q <Plug>VmailMessageWindow_CloseWindow
-  endif
+  "if !hasmapto('<Plug>VmailMessageWindow_CloseWindow')
+    "nmap <buffer> <leader>q <Plug>VmailMessageWindow_CloseWindow
+  "endif
   nnoremap <buffer> <unique> <script> <Plug>VmailMessageWindow_CloseWindow :call <SID>close_message_window()<CR>
 
-  if !hasmapto('<Plug>VmailMessageWindow_DeleteMessage')
-    nmap <buffer> <leader># <Plug>VmailMessageWindow_DeleteMessage
-    nmap <buffer> <leader>3 <Plug>VmailMessageWindow_DeleteMessage
-  endif
+  "if !hasmapto('<Plug>VmailMessageWindow_DeleteMessage')
+    "nmap <buffer> <leader># <Plug>VmailMessageWindow_DeleteMessage
+    "nmap <buffer> <leader>3 <Plug>VmailMessageWindow_DeleteMessage
+  "endif
   nnoremap <buffer> <unique> <script> <Plug>VmailMessageWindow_DeleteMessage :close<cr>:call <SID>focus_list_window()<CR>:call <SID>delete_messages("Deleted")<CR>
 
-  if !hasmapto('<Plug>VmailMessageWindow_ToggleStar')
-    nmap <buffer> <leader>* <Plug>VmailMessageWindow_ToggleStar
-    nmap <buffer> <leader>8 <Plug>VmailMessageWindow_ToggleStar
-  endif
+  "if !hasmapto('<Plug>VmailMessageWindow_ToggleStar')
+    "nmap <buffer> <leader>* <Plug>VmailMessageWindow_ToggleStar
+    "nmap <buffer> <leader>8 <Plug>VmailMessageWindow_ToggleStar
+  "endif
   nnoremap <buffer> <unique> <script> <Plug>VmailMessageWindow_ToggleStar :call <SID>focus_list_window()<cr>:call <SID>toggle_star()<CR>
 
-  if !hasmapto('<Plug>VmailMessageWindow_MarkAsRead')
-    nmap <buffer> I <Plug>VmailMessageWindow_MarkAsRead
-  endif
+  "if !hasmapto('<Plug>VmailMessageWindow_MarkAsRead')
+    "nmap <buffer> I <Plug>VmailMessageWindow_MarkAsRead
+  "endif
   nnoremap <buffer> <unique> <script> <Plug>VmailMessageWindow_MarkAsRead :call <SID>focus_list_window()<cr>:call <SID>mark_as_read_unread(1)<CR>
 
-  if !hasmapto('<Plug>VmailMessageWindow_MarkAsUnread')
-    nmap <buffer> U <Plug>VmailMessageWindow_MarkAsUnread
-  endif
+  "if !hasmapto('<Plug>VmailMessageWindow_MarkAsUnread')
+    "nmap <buffer> U <Plug>VmailMessageWindow_MarkAsUnread
+  "endif
   nnoremap <buffer> <unique> <script> <Plug>VmailMessageWindow_MarkAsUnread :call <SID>focus_list_window()<cr>:call <SID>mark_as_read_unread(0)<CR>
 
-  if !hasmapto('<Plug>VmailMessageWindow_MarkAsSpam')
-    nmap <buffer> <leader>! <Plug>VmailMessageWindow_MarkAsSpam
-    nmap <buffer> <leader>1 <Plug>VmailMessageWindow_MarkAsSpam
-  endif
+  "if !hasmapto('<Plug>VmailMessageWindow_MarkAsSpam')
+    "nmap <buffer> <leader>! <Plug>VmailMessageWindow_MarkAsSpam
+    "nmap <buffer> <leader>1 <Plug>VmailMessageWindow_MarkAsSpam
+  "endif
   nnoremap <buffer> <unique> <script> <Plug>VmailMessageWindow_MarkAsSpam :close<cr>:call <SID>focus_list_window()<cr>:call <SID>delete_messages("spam")<CR>
 
-  if !hasmapto('<Plug>VmailMessageWindow_ArchiveMessage')
-    nmap <buffer> <leader>e <Plug>VmailMessageWindow_ArchiveMessage
-  endif
-  nnoremap <buffer> <unique> <script> <Plug>VmailMessageWindow_ArchiveMessage :call <SID>focus_list_window()<cr>:call <SID>archive_messages()<CR>
+  "if !hasmapto('<Plug>VmailMessageWindow_ArchiveMessage')
+    "nmap <buffer> <leader>e <Plug>VmailMessageWindow_ArchiveMessage
+  "endif
+  nnoremap <buffer> <unique> <script> <Plug>VmailMessageWindow_ArchiveMessage :call <SID>focus_list_window()<cr>:call <SID>archive_messages()<CR>:call <SID>show_message(0)<CR>
 
-  if !hasmapto('<Plug>VmailMessageWindow_MoveToMailbox')
-    nmap <buffer> <leader>b <Plug>VmailMessageWindow_MoveToMailbox
-  endif
+  "if !hasmapto('<Plug>VmailMessageWindow_MoveToMailbox')
+    "nmap <buffer> <leader>b <Plug>VmailMessageWindow_MoveToMailbox
+  "endif
   nnoremap <buffer> <unique> <script> <Plug>VmailMessageWindow_MoveToMailbox :call <SID>focus_list_window()<cr>:call <SID>move_to_mailbox(0)<CR>
 
-  if !hasmapto('<Plug>VmailMessageWindow_CopyToMailbox')
-    nmap <buffer> <leader>B <Plug>VmailMessageWindow_CopyToMailbox
-  endif
+  "if !hasmapto('<Plug>VmailMessageWindow_CopyToMailbox')
+    "nmap <buffer> <leader>B <Plug>VmailMessageWindow_CopyToMailbox
+  "endif
   nnoremap <buffer> <unique> <script> <Plug>VmailMessageWindow_CopyToMailbox :call <SID>focus_list_window()<cr>:call <SID>move_to_mailbox(1)<CR>
 
-  if !hasmapto('<Plug>VmailMessageWindow_Update')
-    nmap <buffer> <leader>u <Plug>VmailMessageWindow_Update
-  endif
+  "if !hasmapto('<Plug>VmailMessageWindow_Update')
+    "nmap <buffer> <leader>u <Plug>VmailMessageWindow_Update
+  "endif
   nnoremap <buffer> <unique> <script> <Plug>VmailMessageWindow_Update :call <SID>focus_list_window()<cr>:call <SID>update()<CR>
 
-  if !hasmapto('<Plug>VmailMessageWindow_SwitchMailBox')
-    nmap <buffer> <leader>m <Plug>VmailMessageWindow_SwitchMailBox
-  endif
+  "if !hasmapto('<Plug>VmailMessageWindow_SwitchMailBox')
+    "nmap <buffer> <leader>m <Plug>VmailMessageWindow_SwitchMailBox
+  "endif
   nnoremap <buffer> <unique> <script> <Plug>VmailMessageWindow_SwitchMailBox :call <SID>focus_list_window()<cr>:call <SID>mailbox_window()<CR>
 
-  if !hasmapto('<Plug>VmailMessageWindow_SaveAttachment')
-    nmap <buffer> <leader>A <Plug>VmailMessageWindow_SaveAttachment
-  endif
+  "if !hasmapto('<Plug>VmailMessageWindow_SaveAttachment')
+    "nmap <buffer> <leader>A <Plug>VmailMessageWindow_SaveAttachment
+  "endif
   nnoremap <buffer> <unique> <script> <Plug>VmailMessageWindow_SaveAttachment :call <SID>save_attachments()<CR>
 
-  if !hasmapto('<Plug>VmailMessageWindow_ToggleWindow')
-    nmap <buffer> <Space> <Plug>VmailMessageWindow_ToggleWindow
-  endif
+  "if !hasmapto('<Plug>VmailMessageWindow_ToggleWindow')
+    "nmap <buffer> <Space> <Plug>VmailMessageWindow_ToggleWindow
+  "endif
   nnoremap <buffer> <unique> <script> <Plug>VmailMessageWindow_ToggleWindow :call <SID>toggle_maximize_window()<cr>
 
-  if !hasmapto('<Plug>VmailMessageWindow_AppendMessagesToFile')
-    nmap <buffer> <leader>vp <Plug>VmailMessageWindow_AppendMessagesToFile
-  endif
+  "if !hasmapto('<Plug>VmailMessageWindow_AppendMessagesToFile')
+    "nmap <buffer> <leader>vp <Plug>VmailMessageWindow_AppendMessagesToFile
+  "endif
   nnoremap <buffer> <unique> <script> <Plug>VmailMessageWindow_AppendMessagesToFile :call <SID>focus_list_window()<cr>:call <SID>append_messages_to_file()<CR>
 
-  if !hasmapto('<Plug>VmailMessageWindow_Search')
-    nmap <buffer> <leader>s <Plug>VmailMessageWindow_Search
-  endif
+  "if !hasmapto('<Plug>VmailMessageWindow_Search')
+    "nmap <buffer> <leader>s <Plug>VmailMessageWindow_Search
+  "endif
   nnoremap <buffer> <unique> <script> <Plug>VmailMessageWindow_Search :call <SID>focus_list_window()<cr>:call <SID>search_query()<cr>
 endfunc
 
-func! s:message_list_window_mappings()
-  if !hasmapto('<Plug>VmailOpenMessage')
-    nmap <buffer> <CR> <Plug>VmailOpenMessage
-    nmap <buffer> <LeftMouse> <Plug>VmailOpenMessage
-  endif
+function! s:message_list_window_mappings()
+  "if !hasmapto('<Plug>VmailOpenMessage')
+    "nmap <buffer> <CR> <Plug>VmailOpenMessage
+    "nmap <buffer> <LeftMouse> <Plug>VmailOpenMessage
+  "endif
   nnoremap <buffer> <unique> <script> <Plug>VmailOpenMessage :call <SID>show_message(0)<CR>
 
-  if !hasmapto('<Plug>VmailPreviewMessage')
-    nmap <buffer> l <Plug>VmailPreviewMessage
-  endif
+  "if !hasmapto('<Plug>VmailPreviewMessage')
+    "nmap <buffer> l <Plug>VmailPreviewMessage
+  "endif
   nnoremap <buffer> <unique> <script> <Plug>VmailPreviewMessage :call <SID>show_message(1)<CR>
 
-  if !hasmapto('<Plug>VmailExit')
-    nmap <buffer> <leader>q <Plug>VmailExit
-  endif
+  "if !hasmapto('<Plug>VmailExit')
+    "nmap <buffer> <leader>q <Plug>VmailExit
+  "endif
   nnoremap <buffer> <unique> <script> <Plug>VmailExit :qall!<CR>
 
-  if !hasmapto('<Plug>VmailToggleStar')
-    nmap <buffer> <leader>* <Plug>VmailToggleStar
-    xmap <buffer> <leader>* <Plug>VmailToggleStar
-    nmap <buffer> <leader>8 <Plug>VmailToggleStar
-    xmap <buffer> <leader>8 <Plug>VmailToggleStar
-  endif
+  "if !hasmapto('<Plug>VmailToggleStar')
+    "nmap <buffer> <leader>* <Plug>VmailToggleStar
+    "xmap <buffer> <leader>* <Plug>VmailToggleStar
+    "nmap <buffer> <leader>8 <Plug>VmailToggleStar
+    "xmap <buffer> <leader>8 <Plug>VmailToggleStar
+  "endif
   nnoremap <buffer> <unique> <script> <Plug>VmailToggleStar :call <SID>toggle_star()<CR>
   xnoremap <buffer> <unique> <script> <Plug>VmailToggleStar :call <SID>toggle_star()<CR>
 
-  if !hasmapto('<Plug>VmailMarkAsUnread')
-    nmap <buffer> U <Plug>VmailMarkAsUnread
-    xmap <buffer> U <Plug>VmailMarkAsUnread
-  endif
+  "if !hasmapto('<Plug>VmailMarkAsUnread')
+    "nmap <buffer> U <Plug>VmailMarkAsUnread
+    "xmap <buffer> U <Plug>VmailMarkAsUnread
+  "endif
   nnoremap <buffer> <unique> <script> <Plug>VmailMarkAsUnread :call <SID>mark_as_read_unread(0)<CR>
   xnoremap <buffer> <unique> <script> <Plug>VmailMarkAsUnread :call <SID>mark_as_read_unread(0)<CR>
 
-  if !hasmapto('<Plug>VmailMarkAsRead')
-    nmap <buffer> I <Plug>VmailMarkAsRead
-    xmap <buffer> I <Plug>VmailMarkAsRead
-  endif
+  "if !hasmapto('<Plug>VmailMarkAsRead')
+    "nmap <buffer> I <Plug>VmailMarkAsRead
+    "xmap <buffer> I <Plug>VmailMarkAsRead
+  "endif
   nnoremap <buffer> <unique> <script> <Plug>VmailMarkAsRead :call <SID>mark_as_read_unread(1)<CR>
   xnoremap <buffer> <unique> <script> <Plug>VmailMarkAsRead :call <SID>mark_as_read_unread(1)<CR>
 
-  if !hasmapto('<Plug>VmailDelete')
-    nmap <buffer> <leader># <Plug>VmailDelete
-    xmap <buffer> <leader># <Plug>VmailDelete
-    nmap <buffer> <leader>3 <Plug>VmailDelete
-    xmap <buffer> <leader>3 <Plug>VmailDelete
-  endif
+  "if !hasmapto('<Plug>VmailDelete')
+    "nmap <buffer> <leader># <Plug>VmailDelete
+    "xmap <buffer> <leader># <Plug>VmailDelete
+    "nmap <buffer> <leader>3 <Plug>VmailDelete
+    "xmap <buffer> <leader>3 <Plug>VmailDelete
+  "endif
   nnoremap <buffer> <unique> <script> <Plug>VmailDelete :call <SID>delete_messages("Deleted")<CR>
   xnoremap <buffer> <unique> <script> <Plug>VmailDelete :call <SID>delete_messages("Deleted")<CR>
 
-  if !hasmapto('<Plug>VmailMarkAsSpam')
-    nmap <buffer> <leader>! <Plug>VmailMarkAsSpam
-    xmap <buffer> <leader>! <Plug>VmailMarkAsSpam
-    nmap <buffer> <leader>1 <Plug>VmailMarkAsSpam
-    xmap <buffer> <leader>1 <Plug>VmailMarkAsSpam
-  endif
+  "if !hasmapto('<Plug>VmailMarkAsSpam')
+    "nmap <buffer> <leader>! <Plug>VmailMarkAsSpam
+    "xmap <buffer> <leader>! <Plug>VmailMarkAsSpam
+    "nmap <buffer> <leader>1 <Plug>VmailMarkAsSpam
+    "xmap <buffer> <leader>1 <Plug>VmailMarkAsSpam
+  "endif
   nnoremap <buffer> <unique> <script> <Plug>VmailMarkAsSpam :call <SID>delete_messages("spam")<CR>
   xnoremap <buffer> <unique> <script> <Plug>VmailMarkAsSpam :call <SID>delete_messages("spam")<CR>
 
-  if !hasmapto('<Plug>VmailArchiveMessage')
-    nmap <buffer> <leader>e <Plug>VmailArchiveMessage
-    xmap <buffer> <leader>e <Plug>VmailArchiveMessage
-  endif
-  nnoremap <buffer> <unique> <script> <Plug>VmailArchiveMessage :call <SID>archive_messages()<CR>
+  "if !hasmapto('<Plug>VmailArchiveMessage')
+    "nmap <buffer> <leader>e <Plug>VmailArchiveMessage
+    "xmap <buffer> <leader>e <Plug>VmailArchiveMessage
+  "endif
+  nnoremap <buffer> <unique> <script> <Plug>VmailArchiveMessage :call <SID>archive_messages()<CR>:call <SID>show_message(1)<CR>
   xnoremap <buffer> <unique> <script> <Plug>VmailArchiveMessage :call <SID>archive_messages()<CR>
 
-  if !hasmapto('<Plug>VmailAppendMessagesToFile')
-    nmap <buffer> <leader>vp <Plug>VmailAppendMessagesToFile
-    xmap <buffer> <leader>vp <Plug>VmailAppendMessagesToFile
-  endif
+  "if !hasmapto('<Plug>VmailAppendMessagesToFile')
+    "nmap <buffer> <leader>vp <Plug>VmailAppendMessagesToFile
+    "xmap <buffer> <leader>vp <Plug>VmailAppendMessagesToFile
+  "endif
   nnoremap <buffer> <unique> <script> <Plug>VmailAppendMessagesToFile :call <SID>append_messages_to_file()<CR>
   xnoremap <buffer> <unique> <script> <Plug>VmailAppendMessagesToFile :call <SID>append_messages_to_file()<CR>
 
-  if !hasmapto('<Plug>VmailUpdate')
-    nmap <buffer> u <Plug>VmailUpdate
-    nmap <buffer> <leader>u <Plug>VmailUpdate
-  endif
+  "if !hasmapto('<Plug>VmailUpdate')
+    "nmap <buffer> u <Plug>VmailUpdate
+    "nmap <buffer> <leader>u <Plug>VmailUpdate
+  "endif
   nnoremap <buffer> <unique> <script> <Plug>VmailUpdate :call <SID>update()<CR>
 
-  if !hasmapto('<Plug>VmailSearch')
-    nmap <buffer> <leader>s <Plug>VmailSearch
-  endif
+  "if !hasmapto('<Plug>VmailSearch')
+    "nmap <buffer> <leader>s <Plug>VmailSearch
+  "endif
   nnoremap <buffer> <unique> <script> <Plug>VmailSearch :call <SID>search_query()<CR>
 
-  if !hasmapto('<Plug>VmailSwitchMailbox')
-    nmap <buffer> <leader>m <Plug>VmailSwitchMailbox
-  endif
+  "if !hasmapto('<Plug>VmailSwitchMailbox')
+    "nmap <buffer> <leader>m <Plug>VmailSwitchMailbox
+  "endif
   nnoremap <buffer> <unique> <script> <Plug>VmailSwitchMailbox :call <SID>mailbox_window()<CR>
 
-  if !hasmapto('<Plug>VmailMoveToMailbox')
-    nmap <buffer> <leader>b <Plug>VmailMoveToMailbox
-    xmap <buffer> <leader>b <Plug>VmailMoveToMailbox
-  endif
+  "if !hasmapto('<Plug>VmailMoveToMailbox')
+    "nmap <buffer> <leader>b <Plug>VmailMoveToMailbox
+    "xmap <buffer> <leader>b <Plug>VmailMoveToMailbox
+  "endif
   nnoremap <buffer> <unique> <script> <Plug>VmailMoveToMailbox :call <SID>move_to_mailbox(0)<CR>
   xnoremap <buffer> <unique> <script> <Plug>VmailMoveToMailbox :call <SID>move_to_mailbox(0)<CR>
 
-  if !hasmapto('<Plug>VmailCopyToMailbox')
-    nmap <buffer> <leader>B <Plug>VmailCopyToMailbox
-    xmap <buffer> <leader>B <Plug>VmailCopyToMailbox
-  endif
+  "if !hasmapto('<Plug>VmailCopyToMailbox')
+    "nmap <buffer> <leader>B <Plug>VmailCopyToMailbox
+    "xmap <buffer> <leader>B <Plug>VmailCopyToMailbox
+  "endif
   nnoremap <buffer> <unique> <script> <Plug>VmailCopyToMailbox :call <SID>move_to_mailbox(1)<CR>
   xnoremap <buffer> <unique> <script> <Plug>VmailCopyToMailbox :call <SID>move_to_mailbox(1)<CR>
 
-  if !hasmapto('<Plug>VmailComposeNew')
-    nmap <buffer> <leader>c <Plug>VmailComposeNew
-  endif
+  "if !hasmapto('<Plug>VmailComposeNew')
+    "nmap <buffer> <leader>c <Plug>VmailComposeNew
+  "endif
   nnoremap <buffer> <unique> <script> <Plug>VmailComposeNew :call <SID>compose_message()<CR>
 
-  if !hasmapto('<Plug>VmailComposeReply')
-    nmap <buffer> <Leader>r <Plug>VmailComposeReply
-  endif
-  nnoremap <buffer> <unique> <script> <Plug>VmailComposeReply :call <SID>show_message(0)<CR>:call <SID>compose_reply(0)<CR>
+  "if !hasmapto('<Plug>VmailComposeReply')
+    "nmap <buffer> <Leader>r <Plug>VmailComposeReply
+  "endif
+  nnoremap <buffer> <unique> <script> <Plug>VmailComposeReply/ :call <SID>show_message(0)<CR>:call <SID>compose_reply(0)<CR>
 
-  if !hasmapto('<Plug>VmailComposeReplyAll')
-    nmap <buffer> <Leader>a <Plug>VmailComposeReplyAll
-  endif
+  "if !hasmapto('<Plug>VmailComposeReplyAll')
+    "nmap <buffer> <Leader>a <Plug>VmailComposeReplyAll
+  "endif
   nnoremap <buffer> <unique> <script> <Plug>VmailComposeReplyAll :call <SID>show_message(0)<CR>:call <SID>compose_reply(1)<CR>
 
-  if !hasmapto('<Plug>VmailForward')
-    nmap <buffer> <Leader>f <Plug>VmailForward
-  endif
+  "if !hasmapto('<Plug>VmailForward')
+    "nmap <buffer> <Leader>f <Plug>VmailForward
+  "endif
   nnoremap <buffer> <unique> <script> <Plug>VmailForward :call <SID>show_message(0)<CR>:call <SID>compose_forward()<CR>
 
-  if !hasmapto('<Plug>VmailShowNextMessage')
-    nmap <buffer> <C-j> <Plug>VmailShowNextMessage
-  endif
+  "if !hasmapto('<Plug>VmailShowNextMessage')
+    "nmap <buffer> <C-j> <Plug>VmailShowNextMessage
+  "endif
   nnoremap <buffer> <unique> <script> <Plug>VmailShowNextMessage :call <SID>show_next_message_in_list()<CR>
 
-  if !hasmapto('<Plug>VmailShowPrevMessage')
-    nmap <buffer> <C-k> <Plug>VmailShowPrevMessage
-  endif
+  "if !hasmapto('<Plug>VmailShowPrevMessage')
+    "nmap <buffer> <C-k> <Plug>VmailShowPrevMessage
+  "endif
   nnoremap <buffer> <unique> <script> <Plug>VmailShowPrevMessage :call <SID>show_previous_message_in_list()<CR>
 
-  if !hasmapto('<Plug>VmailToggleWindow')
-    nmap <buffer> <Space> <Plug>VmailToggleWindow
-  endif
+  "if !hasmapto('<Plug>VmailToggleWindow')
+    "nmap <buffer> <Space> <Plug>VmailToggleWindow
+  "endif
   nnoremap <buffer> <unique> <script> <Plug>VmailToggleWindow :call <SID>toggle_maximize_window()<cr>
-
-  autocmd CursorMoved <buffer> :redraw
-  autocmd BufEnter,BufWinEnter <buffer> :call <SID>set_list_colors()
 endfunc
 
-func! s:compose_window_mappings()
-  if !hasmapto('<Plug>VmailComposeWinClose')
-    nmap <buffer> <leader>q <Plug>VmailComposeWinClose
-  endif
+function! s:message_list_window_mappings_custom()
+
+    BindPlug <cr> -buffer <Plug>VmailOpenMessage
+    BindPlug f -buffer <Plug>VmailPreviewMessage
+
+    BindPlug <localleader>bs -buffer <Plug>VmailSwitchMailbox
+    BindPlug <localleader>bm -buffer <Plug>VmailMoveToMailbox
+    BindPlug <localleader>bc -buffer <Plug>VmailCopyToMailbox
+
+    BindPlug <localleader>s -buffer -repeatable <Plug>VmailToggleStar
+
+    BindPlug <localleader>j -buffer <Plug>VmailShowNextMessage
+    BindPlug <localleader>k -buffer <Plug>VmailShowPrevMessage
+    BindPlug <c-a> -buffer <Plug>VmailToggleWindow
+
+    BindPlug <localleader>mu -buffer <Plug>VmailMarkAsUnread
+    BindPlug <localleader>mr -buffer <Plug>VmailMarkAsRead
+    BindPlug <localleader>ms -buffer <Plug>VmailMarkAsSpam
+
+    BindPlug <localleader>a -buffer -repeatable <Plug>VmailArchiveMessage
+
+    BindPlug <localleader>d -buffer -repeatable <Plug>VmailDelete
+
+    BindPlug <localleader>u -buffer <Plug>VmailUpdate
+    BindPlug <localleader>n -buffer <Plug>VmailComposeNew
+
+    BindPlug <localleader>q -buffer <Plug>VmailSearch
+
+    BindPlug <localleader>R -buffer <Plug>VmailComposeReply/
+    BindPlug <localleader>r -buffer <Plug>VmailComposeReplyAll
+    BindPlug <localleader>f -buffer <Plug>VmailForward
+endfunction
+
+function! s:message_window_mappings_custom()
+
+    BindPlug <cr> -buffer <Plug>VmailMessageWindow_FocusListWindow
+
+    BindPlug <localleader>R -buffer <Plug>VmailMessageWindow_Reply/
+    BindPlug <localleader>r -buffer <Plug>VmailMessageWindow_ReplyToAll
+    "BindPlug ? -buffer <Plug>VmailMessageWindow_ShowRaw
+    BindPlug <localleader>f -buffer <Plug>VmailMessageWindow_Forward
+
+    BindPlug <localleader>j -buffer <Plug>VmailMessageWindow_ShowNext
+    BindPlug <localleader>k -buffer <Plug>VmailMessageWindow_ShowPrev
+    BindPlug <localleader>n -buffer <Plug>VmailMessageWindow_ComposeMessage
+
+    "BindPlug ? -buffer <Plug>VmailMessageWindow_OpenHTML
+    BindPlug <c-q> -buffer <Plug>VmailMessageWindow_CloseWindow
+    BindPlug <localleader>d -buffer <Plug>VmailMessageWindow_DeleteMessage
+    BindPlug <localleader>s -buffer <Plug>VmailMessageWindow_ToggleStar
+
+    BindPlug <localleader>mr -buffer <Plug>VmailMessageWindow_MarkAsRead
+    BindPlug <localleader>mu -buffer <Plug>VmailMessageWindow_MarkAsUnread
+    BindPlug <localleader>ms -buffer <Plug>VmailMessageWindow_MarkAsSpam
+
+    BindPlug <localleader>a -buffer <Plug>VmailMessageWindow_ArchiveMessage
+
+    BindPlug <localleader>bm -buffer <Plug>VmailMessageWindow_MoveToMailbox
+    BindPlug <localleader>bc -buffer <Plug>VmailMessageWindow_CopyToMailbox
+    " bs = box switch
+    BindPlug <localleader>bs -buffer <Plug>VmailMessageWindow_SwitchMailBox
+
+    BindPlug <localleader>u -buffer <Plug>VmailMessageWindow_Update
+
+    "BindPlug <localleader>? -buffer <Plug>VmailMessageWindow_SaveAttachment
+
+    BindPlug <c-a> -buffer <Plug>VmailMessageWindow_ToggleWindow
+    "BindPlug <localleader>? -buffer <Plug>VmailMessageWindow_AppendMessagesToFile
+    BindPlug <localleader>q -buffer <Plug>VmailMessageWindow_Search
+endfunction
+
+function! s:compose_window_mappings()
+  "if !hasmapto('<Plug>VmailComposeWinClose')
+    "nmap <buffer> <leader>q <Plug>VmailComposeWinClose
+  "endif
   nnoremap <buffer>  <script> <Plug>VmailComposeWinClose :call <SID>close_and_focus_list_window()<CR>
   setlocal ai
   command! -bar -nargs=1 -complete=file VMAttach call s:attach_file(<f-args>)
 endfunc
 
-func! s:global_mappings()
+function! s:compose_window_mappings_custom()
+    BindPlug <c-q> -buffer <Plug>VmailComposeWinClose
+endfunction
+
+function! s:global_mappings()
   " NOTE send_message is a global mapping, so user can load a saved
   " message from a file and send it
-  nnoremap <silent> <leader>vs :call <SID>send_message()<CR>
-  noremap <silent> <leader>o :call <SID>open_href(0)<cr>
-  noremap <silent> <leader>O :call <SID>open_href(1)<cr>
-  noremap <silent> <leader>? :call <SID>show_help()<cr>
-  noremap <silent> <leader>qq :qal!<cr>
+
+  nnoremap <silent> <plug>VmailSendMessage :call <SID>send_message()<CR>
+  nnoremap <silent> <plug>VmailOpen1Href :call <SID>open_href(0)<cr>
+  nnoremap <silent> <plug>VmailOpen2Href :call <SID>open_href(1)<cr>
+  nnoremap <silent> <plug>VmailShowHelp :call <SID>show_help()<cr>
+
+  BindPlug <localleader>vs <Plug>VmailSendMessage
+
+  "nnoremap <silent> <leader>vs :call <SID>send_message()<CR>
+  "noremap <silent> <leader>o :call <SID>open_href(0)<cr>
+  "noremap <silent> <leader>O :call <SID>open_href(1)<cr>
+  "noremap <silent> <leader>? :call <SID>show_help()<cr>
+  "noremap <silent> <leader>qq :qal!<cr>
 endfunc
 
-func! s:set_list_colors()
+function! s:set_list_colors()
   if !exists("g:syntax_on")
     return
   endif
@@ -1124,7 +1219,8 @@ func! s:set_list_colors()
 endfunc
 
 "TODO see if using LocalLeader and maplocalleader makes more sense
-let mapleader = ","
+let mapleader = "<space>"
+let maplocalleader = ","
 
 call s:global_mappings()
 
@@ -1138,7 +1234,7 @@ call s:focus_list_window() " to go list window
 call s:system_with_error_handling(s:set_window_width_command . winwidth(1))
 
 autocmd bufreadpost *.txt call <SID>turn_into_compose_window()
-normal G
+normal! G
 call s:system_with_error_handling(s:select_mailbox_command . shellescape(s:mailbox))
 call s:do_search()
 
